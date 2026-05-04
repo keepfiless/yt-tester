@@ -558,8 +558,8 @@ jobs:
               FOLDER_ENCODED=$(urlencode "$FOLDER_NAME")
               FOLDER_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${BRANCH}/videos/${FOLDER_ENCODED}"
 
-              # FIX: Use printf to guarantee newline after each entry
-              printf "%s - %s [%s](%s)\n" "$NUM" "$RANDOM_EMOJI" "$FOLDER_NAME" "$FOLDER_LINK" >> "$MASTER_README"
+              # FIX: Use bullet list format with hyphen, number, emoji, and link - ensures each on a new line
+              printf -- "- %s - %s [%s](%s)\n" "$NUM" "$RANDOM_EMOJI" "$FOLDER_NAME" "$FOLDER_LINK" >> "$MASTER_README"
             done
 
             echo "Master README regenerated with $NUM videos"
