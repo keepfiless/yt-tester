@@ -132,7 +132,6 @@ jobs:
             
             case $METHOD in
               1)
-                # Method 1: Standard with WARP proxy
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
@@ -148,7 +147,6 @@ jobs:
                   "$URL"
                 ;;
               2)
-                # Method 2: Android client
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
@@ -162,7 +160,6 @@ jobs:
                   "$URL"
                 ;;
               3)
-                # Method 3: iOS client
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
@@ -176,7 +173,6 @@ jobs:
                   "$URL"
                 ;;
               4)
-                # Method 4: Web client with different headers
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
@@ -191,7 +187,6 @@ jobs:
                   "$URL"
                 ;;
               5)
-                # Method 5: Without proxy (direct)
                 yt-dlp \
                   --format "$FORMAT" \
                   --merge-output-format mp4 \
@@ -205,7 +200,6 @@ jobs:
                   "$URL"
                 ;;
               6)
-                # Method 6: TV embedded client
                 yt-dlp \
                   --proxy "socks5://127.0.0.1:1080" \
                   --format "$FORMAT" \
@@ -220,7 +214,6 @@ jobs:
             esac
           }
 
-          # Try each method with delay between attempts
           DOWNLOAD_SUCCESS=false
           for METHOD in 1 2 3 4 5 6; do
             if download_video $METHOD; then
@@ -239,10 +232,8 @@ jobs:
           fi
 
           echo "Download complete!"
+          echo "Files in tmp_downloads:"
           ls -la tmp_downloads/
-
-          # Save video folder name to file for later use
-          echo "" > /tmp/video_folder_name.txt
 
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
@@ -268,6 +259,9 @@ jobs:
             echo "${NAME}_${RANDOM_SUFFIX}"
           }
 
+          # Create file to store video info for README update in commit step
+          echo "" > /tmp/video_info.txt
+
           FILE_INDEX=0
           for FILE in tmp_downloads/*; do
             [ -f "$FILE" ] || continue
@@ -283,12 +277,10 @@ jobs:
             mkdir -p "videos/${FINAL_FOLDER_NAME}"
             echo "Created folder: videos/${FINAL_FOLDER_NAME}"
 
-            # Save info for README update later
-            echo "${FILENAME_NO_EXT}|${FINAL_FOLDER_NAME}" >> /tmp/video_folder_name.txt
+            # Save info for master README update
+            echo "${FILENAME_NO_EXT}|${FINAL_FOLDER_NAME}" >> /tmp/video_info.txt
 
             TEMP_NAME="video_${FILE_INDEX}"
-            
-            # URL encode the folder name for links
             FOLDER_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}")
 
             if [ "$SIZE" -gt "$SPLIT_BYTES" ]; then
@@ -477,7 +469,14 @@ jobs:
               fi
             fi
           done
+
           rm -rf tmp_downloads
+
+          # Debug: Show what was created
+          echo ""
+          echo "===== DEBUG: Contents of videos folder ====="
+          find videos -type f | head -50
+          echo "===== END DEBUG ====="
 
       - name: Stop WARP Container
         if: always()
@@ -490,144 +489,216 @@ jobs:
           BRANCH="${GITHUB_REF_NAME}"
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
-          
+
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
           echo "AVASAM (https://avasam.ir) - Preparing to commit files"
 
-          if [ ! -d "videos" ] || [ -z "$(ls -A videos 2>/dev/null)" ]; then
-            echo "No files to commit in videos folder"
+          # Debug: Show current state
+          echo "===== Current directory contents ====="
+          ls -la
+          echo "===== Videos folder contents ====="
+          ls -la videos/ 2>/dev/null || echo "No videos folder"
+          echo "===== Git status ====="
+          git status
+
+          # Check if videos folder has files
+          if [ ! -d "videos" ]; then
+            echo "ERROR: videos folder does not exist!"
             exit 1
           fi
 
-          # Function for proper URL encoding
+          VIDEO_FILE_COUNT=$(find videos -type f | wc -l)
+          echo "Found $VIDEO_FILE_COUNT files in videos folder"
+
+          if [ "$VIDEO_FILE_COUNT" -eq 0 ]; then
+            echo "ERROR: No files found in videos folder!"
+            exit 1
+          fi
+
+          # Function for URL encoding
           urlencode() {
             python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
           }
 
-          # Function to update master README with proper locking
+          # Function to update master README
           update_master_readme() {
             local VIDEO_NAME="$1"
             local FOLDER_NAME="$2"
-            
+
             MASTER_README="videos/README.md"
             FOLDER_ENCODED=$(urlencode "${FOLDER_NAME}")
             FOLDER_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${BRANCH}/videos/${FOLDER_ENCODED}"
-            
+
             # Video emojis array
             VIDEO_EMOJIS=("🎬" "🎥" "📽️" "🎞️" "📺" "🎦" "🎭" "🎪" "🎯" "🎮" "🎵" "🎶" "🎸" "🎹" "🎤")
             RANDOM_EMOJI="${VIDEO_EMOJIS[$RANDOM % ${#VIDEO_EMOJIS[@]}]}"
-            
+
             if [ -f "$MASTER_README" ]; then
-              # Get the current highest number from existing entries
-              LAST_NUM=$(grep -oP '^\d+' "$MASTER_README" | sort -n | tail -1)
+              # Check if video already in list
+              if grep -qF "[${VIDEO_NAME}]" "$MASTER_README"; then
+                echo "Video already in master README, skipping: ${VIDEO_NAME}"
+                return
+              fi
+
+              # Get highest number
+              LAST_NUM=$(grep -oE '^[0-9]+' "$MASTER_README" | sort -n | tail -1)
               if [ -z "$LAST_NUM" ]; then
                 NEXT_NUM=1
               else
                 NEXT_NUM=$((LAST_NUM + 1))
               fi
-              
-              # Check if this video already exists in README
-              if ! grep -q "\[${VIDEO_NAME}\]" "$MASTER_README"; then
-                # Append new video entry
-                printf '\n%s\n' "${NEXT_NUM} - ${RANDOM_EMOJI} [${VIDEO_NAME}](${FOLDER_LINK})" >> "$MASTER_README"
-              fi
+
+              # Append new entry
+              echo "" >> "$MASTER_README"
+              echo "${NEXT_NUM} - ${RANDOM_EMOJI} [${VIDEO_NAME}](${FOLDER_LINK})" >> "$MASTER_README"
             else
               # Create new master README
               {
-                printf '%s\n' "# DOWNLOADED VIDEOS LIST :"
-                printf '%s\n' ""
-                printf '%s\n' "----"
-                printf '%s\n' ""
-                printf '%s\n' "1 - ${RANDOM_EMOJI} [${VIDEO_NAME}](${FOLDER_LINK})"
+                echo "# DOWNLOADED VIDEOS LIST :"
+                echo ""
+                echo "----"
+                echo ""
+                echo "1 - ${RANDOM_EMOJI} [${VIDEO_NAME}](${FOLDER_LINK})"
               } > "$MASTER_README"
             fi
-            
-            echo "Updated master README.md with: ${VIDEO_NAME}"
+
+            echo "Updated master README with: ${VIDEO_NAME}"
           }
 
-          # Robust push function with retry and conflict resolution
+          # Robust push with retry for concurrent workflows
           push_with_retry() {
-            local MAX_RETRIES=10
-            local RETRY_COUNT=0
-            local WAIT_TIME=5
-            
-            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              echo "Push attempt $RETRY_COUNT of $MAX_RETRIES..."
-              
-              # Fetch latest changes
+            local MAX_RETRIES=15
+            local RETRY=0
+
+            while [ $RETRY -lt $MAX_RETRIES ]; do
+              RETRY=$((RETRY + 1))
+              echo ""
+              echo "========== Push attempt $RETRY of $MAX_RETRIES =========="
+
+              # Fetch latest from remote
+              echo "Fetching latest changes..."
               git fetch origin "$BRANCH" || true
-              
-              # Check if we're behind
-              LOCAL=$(git rev-parse HEAD)
-              REMOTE=$(git rev-parse origin/"$BRANCH" 2>/dev/null || echo "")
-              
-              if [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
-                echo "Local branch is behind remote, syncing..."
-                
-                # Stash any uncommitted changes
-                git stash --include-untracked || true
-                
-                # Reset to remote and re-apply our changes
-                git reset --hard origin/"$BRANCH"
-                
+
+              # Check if we need to rebase
+              LOCAL_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "none")
+              REMOTE_HEAD=$(git rev-parse origin/"$BRANCH" 2>/dev/null || echo "none")
+
+              echo "Local HEAD: $LOCAL_HEAD"
+              echo "Remote HEAD: $REMOTE_HEAD"
+
+              if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ] && [ "$REMOTE_HEAD" != "none" ]; then
+                echo "Branches diverged, rebasing..."
+
+                # Save our current changes
+                git stash push -m "temp_stash_$(date +%s)" --include-untracked || true
+
+                # Get list of stashes
+                STASH_COUNT=$(git stash list | wc -l)
+                echo "Stash count: $STASH_COUNT"
+
+                # Pull latest
+                git pull --rebase origin "$BRANCH" || {
+                  echo "Rebase failed, resetting to remote..."
+                  git rebase --abort 2>/dev/null || true
+                  git reset --hard origin/"$BRANCH"
+                }
+
                 # Pop stash if we have one
-                git stash pop || true
-                
-                # Re-stage all video files
-                git add videos/ || true
-                
-                # Check if there's anything to commit
-                if [ -n "$(git diff --cached --name-only)" ]; then
-                  git commit -m "[AVASAM] YouTube download - retry $RETRY_COUNT [skip ci]" || true
+                if [ "$STASH_COUNT" -gt 0 ]; then
+                  echo "Restoring stashed changes..."
+                  git stash pop || {
+                    echo "Stash pop failed, trying to apply..."
+                    git checkout stash -- . 2>/dev/null || true
+                    git stash drop || true
+                  }
+                fi
+
+                # Re-read video info and update master README
+                if [ -f /tmp/video_info.txt ]; then
+                  while IFS='|' read -r VIDEO_NAME FOLDER_NAME || [ -n "$VIDEO_NAME" ]; do
+                    if [ -n "$VIDEO_NAME" ] && [ -n "$FOLDER_NAME" ]; then
+                      # Check if the folder exists (our files)
+                      if [ -d "videos/${FOLDER_NAME}" ]; then
+                        update_master_readme "$VIDEO_NAME" "$FOLDER_NAME"
+                      fi
+                    fi
+                  done < /tmp/video_info.txt
+                fi
+
+                # Re-add all files
+                echo "Re-adding all video files..."
+                git add -A videos/
+
+                # Check if there are changes to commit
+                if git diff --cached --quiet; then
+                  echo "No changes to commit after rebase"
+                else
+                  git commit -m "[AVASAM] YouTube download [skip ci]" || true
                 fi
               fi
-              
+
               # Try to push
-              if git push origin HEAD:"$BRANCH"; then
+              echo "Attempting to push..."
+              if git push origin HEAD:"$BRANCH" 2>&1; then
                 echo "Push successful!"
                 return 0
               else
-                echo "Push failed, waiting ${WAIT_TIME}s before retry..."
-                sleep $((WAIT_TIME + RANDOM % 10))
-                WAIT_TIME=$((WAIT_TIME + 5))
+                WAIT_TIME=$((5 + RANDOM % 15))
+                echo "Push failed. Waiting ${WAIT_TIME}s before retry..."
+                sleep $WAIT_TIME
               fi
             done
-            
-            echo "All push attempts failed!"
+
+            echo "ERROR: All push attempts failed!"
             return 1
           }
 
-          # First, sync with remote to get latest README
-          git fetch origin "$BRANCH" || true
-          git reset --hard origin/"$BRANCH" || true
-
-          # Re-copy our downloaded files (they're still in the working directory)
-          # The video files should still be in place since reset --hard only affects tracked files
-
-          # Stage all new video files first
-          git add videos/*/
-
-          # Read video info and update master README
-          if [ -f /tmp/video_folder_name.txt ]; then
-            while IFS='|' read -r VIDEO_NAME FOLDER_NAME; do
+          # Read video info and update master README BEFORE first commit
+          echo ""
+          echo "===== Updating master README ====="
+          if [ -f /tmp/video_info.txt ]; then
+            cat /tmp/video_info.txt
+            while IFS='|' read -r VIDEO_NAME FOLDER_NAME || [ -n "$VIDEO_NAME" ]; do
               if [ -n "$VIDEO_NAME" ] && [ -n "$FOLDER_NAME" ]; then
-                update_master_readme "$VIDEO_NAME" "$FOLDER_NAME"
+                echo "Processing: VIDEO_NAME='${VIDEO_NAME}' FOLDER_NAME='${FOLDER_NAME}'"
+                if [ -d "videos/${FOLDER_NAME}" ]; then
+                  update_master_readme "$VIDEO_NAME" "$FOLDER_NAME"
+                else
+                  echo "WARNING: Folder videos/${FOLDER_NAME} does not exist!"
+                fi
               fi
-            done < /tmp/video_folder_name.txt
-          fi
-
-          # Stage the master README
-          git add videos/README.md || true
-
-          # Commit all changes at once
-          if [ -n "$(git diff --cached --name-only)" ]; then
-            git commit -m "[AVASAM] YouTube download [skip ci]"
-            push_with_retry
+            done < /tmp/video_info.txt
           else
-            echo "Nothing new to commit"
+            echo "WARNING: /tmp/video_info.txt not found!"
           fi
 
-          echo "All files pushed - AVASAM (https://avasam.ir)"
+          # Add all video files
+          echo ""
+          echo "===== Adding files to git ====="
+          git add -A videos/
+
+          # Show what's staged
+          echo ""
+          echo "===== Staged files ====="
+          git diff --cached --name-only
+
+          # Check if there's anything to commit
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          # Commit
+          echo ""
+          echo "===== Committing ====="
+          git commit -m "[AVASAM] YouTube download [skip ci]"
+
+          # Push with retry
+          echo ""
+          echo "===== Pushing ====="
+          push_with_retry
+
+          echo ""
+          echo "All files pushed successfully - AVASAM (https://avasam.ir)"
