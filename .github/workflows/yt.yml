@@ -1,4 +1,3 @@
----
 name: 01- 🎬 Youtube Downloader
 
 on:
@@ -559,7 +558,8 @@ jobs:
               FOLDER_ENCODED=$(urlencode "$FOLDER_NAME")
               FOLDER_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${BRANCH}/videos/${FOLDER_ENCODED}"
 
-              echo "${NUM} - ${RANDOM_EMOJI} [${FOLDER_NAME}](${FOLDER_LINK})" >> "$MASTER_README"
+              # FIX: Use printf to guarantee newline after each entry
+              printf "%s - %s [%s](%s)\n" "$NUM" "$RANDOM_EMOJI" "$FOLDER_NAME" "$FOLDER_LINK" >> "$MASTER_README"
             done
 
             echo "Master README regenerated with $NUM videos"
