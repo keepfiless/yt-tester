@@ -1,3 +1,4 @@
+---
 name: 01- 🎬 Youtube Downloader
 
 on:
@@ -86,6 +87,11 @@ jobs:
           SPLIT_MB=90
           SPLIT_BYTES=$(( SPLIT_MB * 1024 * 1024 ))
 
+          # Create safe backup location for our files
+          BACKUP_DIR="/tmp/video_backup_$$"
+          mkdir -p "$BACKUP_DIR"
+          echo "$BACKUP_DIR" > /tmp/backup_dir_path.txt
+
           mkdir -p videos tmp_downloads
 
           echo "AVASAM YouTube Downloader"
@@ -93,6 +99,7 @@ jobs:
           echo ""
           echo "Downloading: $URL"
           echo "Quality: $QUALITY"
+          echo "Backup dir: $BACKUP_DIR"
           if [ -n "$ZIP_PASSWORD" ]; then
             echo "Password protection: ENABLED"
           else
@@ -129,7 +136,7 @@ jobs:
           download_video() {
             local METHOD=$1
             echo "Trying download method $METHOD..."
-            
+
             case $METHOD in
               1)
                 yt-dlp \
@@ -248,19 +255,22 @@ jobs:
           get_unique_folder() {
             local BASE_PATH="$1"
             local NAME="$2"
-            if [ ! -d "$BASE_PATH/$NAME" ]; then
+            local CHECK_BACKUP="$3"
+
+            # Check both in videos and backup dir
+            if [ ! -d "$BASE_PATH/$NAME" ] && [ ! -d "$BACKUP_DIR/$NAME" ]; then
               echo "$NAME"
               return
             fi
             local RANDOM_SUFFIX=$(get_random_word)
-            while [ -d "$BASE_PATH/${NAME}_${RANDOM_SUFFIX}" ]; do
+            while [ -d "$BASE_PATH/${NAME}_${RANDOM_SUFFIX}" ] || [ -d "$BACKUP_DIR/${NAME}_${RANDOM_SUFFIX}" ]; do
               RANDOM_SUFFIX=$(get_random_word)
             done
             echo "${NAME}_${RANDOM_SUFFIX}"
           }
 
-          # Create file to store video info for README update in commit step
-          echo "" > /tmp/video_info.txt
+          # Create file to store video info
+          > /tmp/video_info.txt
 
           FILE_INDEX=0
           for FILE in tmp_downloads/*; do
@@ -273,9 +283,11 @@ jobs:
 
             echo "Processing: $BASENAME ($(( SIZE / 1024 / 1024 ))MB)"
 
-            FINAL_FOLDER_NAME=$(get_unique_folder "videos" "$FILENAME_NO_EXT")
-            mkdir -p "videos/${FINAL_FOLDER_NAME}"
-            echo "Created folder: videos/${FINAL_FOLDER_NAME}"
+            FINAL_FOLDER_NAME=$(get_unique_folder "videos" "$FILENAME_NO_EXT" "true")
+
+            # Create folder in BACKUP location (safe from git operations)
+            mkdir -p "$BACKUP_DIR/${FINAL_FOLDER_NAME}"
+            echo "Created backup folder: $BACKUP_DIR/${FINAL_FOLDER_NAME}"
 
             # Save info for master README update
             echo "${FILENAME_NO_EXT}|${FINAL_FOLDER_NAME}" >> /tmp/video_info.txt
@@ -298,7 +310,7 @@ jobs:
               for part in ${TEMP_NAME}.z[0-9]* ${TEMP_NAME}.zip; do
                 if [ -f "$part" ]; then
                   PART_EXT="${part##*.}"
-                  mv "$part" "../videos/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.${PART_EXT}"
+                  mv "$part" "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.${PART_EXT}"
                   echo "  Created: ${FINAL_FOLDER_NAME}.${PART_EXT}"
                 fi
               done
@@ -306,11 +318,11 @@ jobs:
               rm -f "${TEMP_NAME}.${EXT}"
               cd ..
 
-              PART_COUNT=$(ls "videos/${FINAL_FOLDER_NAME}/"*.z* 2>/dev/null | wc -l)
-              echo "Created $PART_COUNT parts in videos/${FINAL_FOLDER_NAME}/"
+              PART_COUNT=$(ls "$BACKUP_DIR/${FINAL_FOLDER_NAME}/"*.z* 2>/dev/null | wc -l)
+              echo "Created $PART_COUNT parts"
 
               TOTAL_SIZE=0
-              for part_file in "videos/${FINAL_FOLDER_NAME}"/*; do
+              for part_file in "$BACKUP_DIR/${FINAL_FOLDER_NAME}"/*; do
                 if [ -f "$part_file" ]; then
                   PART_SIZE=$(stat -c%s "$part_file")
                   TOTAL_SIZE=$((TOTAL_SIZE + PART_SIZE))
@@ -320,7 +332,7 @@ jobs:
 
               DOWNLOAD_LINKS_MD=""
               LINK_NUM=0
-              for part_file in "videos/${FINAL_FOLDER_NAME}"/*.z*; do
+              for part_file in "$BACKUP_DIR/${FINAL_FOLDER_NAME}"/*.z*; do
                 if [ -f "$part_file" ]; then
                   PART_BASENAME=$(basename "$part_file")
                   PART_ENCODED=$(urlencode "${PART_BASENAME}")
@@ -330,7 +342,7 @@ jobs:
                 fi
               done
 
-              README_FILE="videos/${FINAL_FOLDER_NAME}/README.md"
+              README_FILE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
               {
                 printf '%s\n' "# ${FILENAME_NO_EXT}"
                 printf '%s\n' ""
@@ -372,17 +384,17 @@ jobs:
                 printf '%s\n' "*This tool created by [avasam.ir](https://avasam.ir)*"
               } > "$README_FILE"
 
-              echo "Created README.md in videos/${FINAL_FOLDER_NAME}/"
+              echo "Created README.md"
 
             else
               if [ -n "$ZIP_PASSWORD" ]; then
-                echo "$BASENAME - creating password-protected zip in folder: videos/${FINAL_FOLDER_NAME}"
+                echo "$BASENAME - creating password-protected zip"
 
                 cp "$FILE" "tmp_downloads/${TEMP_NAME}.${EXT}"
 
                 cd tmp_downloads
                 zip -j -P "$ZIP_PASSWORD" "${TEMP_NAME}.zip" "${TEMP_NAME}.${EXT}"
-                mv "${TEMP_NAME}.zip" "../videos/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.zip"
+                mv "${TEMP_NAME}.zip" "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.zip"
                 rm -f "${TEMP_NAME}.${EXT}"
                 cd ..
 
@@ -390,7 +402,7 @@ jobs:
                 FILE_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}.zip")
                 RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${FILE_ENCODED}"
 
-                README_FILE="videos/${FINAL_FOLDER_NAME}/README.md"
+                README_FILE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
                 {
                   printf '%s\n' "# ${FILENAME_NO_EXT}"
                   printf '%s\n' ""
@@ -423,15 +435,15 @@ jobs:
                 echo "Created password-protected zip and README.md"
 
               else
-                echo "$BASENAME - copying mp4 to folder: videos/${FINAL_FOLDER_NAME}"
+                echo "$BASENAME - copying mp4"
 
-                cp "$FILE" "videos/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.${EXT}"
+                cp "$FILE" "$BACKUP_DIR/${FINAL_FOLDER_NAME}/${FINAL_FOLDER_NAME}.${EXT}"
 
                 SIZE_MB=$(echo "scale=2; $SIZE / 1024 / 1024" | bc)
                 FILE_ENCODED=$(urlencode "${FINAL_FOLDER_NAME}.${EXT}")
                 RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/videos/${FOLDER_ENCODED}/${FILE_ENCODED}"
 
-                README_FILE="videos/${FINAL_FOLDER_NAME}/README.md"
+                README_FILE="$BACKUP_DIR/${FINAL_FOLDER_NAME}/README.md"
                 {
                   printf '%s\n' "# ${FILENAME_NO_EXT}"
                   printf '%s\n' ""
@@ -472,11 +484,12 @@ jobs:
 
           rm -rf tmp_downloads
 
-          # Debug: Show what was created
+          # Debug: Show backup contents
           echo ""
-          echo "===== DEBUG: Contents of videos folder ====="
-          find videos -type f | head -50
-          echo "===== END DEBUG ====="
+          echo "===== Backup folder contents ====="
+          find "$BACKUP_DIR" -type f | head -50
+          echo "===== Video info file ====="
+          cat /tmp/video_info.txt
 
       - name: Stop WARP Container
         if: always()
@@ -495,25 +508,16 @@ jobs:
 
           echo "AVASAM (https://avasam.ir) - Preparing to commit files"
 
-          # Debug: Show current state
-          echo "===== Current directory contents ====="
-          ls -la
-          echo "===== Videos folder contents ====="
-          ls -la videos/ 2>/dev/null || echo "No videos folder"
-          echo "===== Git status ====="
-          git status
+          # Get backup directory path
+          BACKUP_DIR=$(cat /tmp/backup_dir_path.txt)
+          echo "Backup directory: $BACKUP_DIR"
 
-          # Check if videos folder has files
-          if [ ! -d "videos" ]; then
-            echo "ERROR: videos folder does not exist!"
-            exit 1
-          fi
+          # Check backup has files
+          BACKUP_FILE_COUNT=$(find "$BACKUP_DIR" -type f 2>/dev/null | wc -l)
+          echo "Files in backup: $BACKUP_FILE_COUNT"
 
-          VIDEO_FILE_COUNT=$(find videos -type f | wc -l)
-          echo "Found $VIDEO_FILE_COUNT files in videos folder"
-
-          if [ "$VIDEO_FILE_COUNT" -eq 0 ]; then
-            echo "ERROR: No files found in videos folder!"
+          if [ "$BACKUP_FILE_COUNT" -eq 0 ]; then
+            echo "ERROR: No files in backup directory!"
             exit 1
           fi
 
@@ -522,54 +526,48 @@ jobs:
             python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
           }
 
-          # Function to update master README
-          update_master_readme() {
-            local VIDEO_NAME="$1"
-            local FOLDER_NAME="$2"
-
+          # Function to regenerate master README from all folders
+          regenerate_master_readme() {
             MASTER_README="videos/README.md"
-            FOLDER_ENCODED=$(urlencode "${FOLDER_NAME}")
-            FOLDER_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${BRANCH}/videos/${FOLDER_ENCODED}"
 
-            # Video emojis array
+            echo "Regenerating master README..."
+
+            # Start fresh README
+            {
+              echo "# DOWNLOADED VIDEOS LIST :"
+              echo ""
+              echo "----"
+              echo ""
+            } > "$MASTER_README"
+
+            # Video emojis
             VIDEO_EMOJIS=("🎬" "🎥" "📽️" "🎞️" "📺" "🎦" "🎭" "🎪" "🎯" "🎮" "🎵" "🎶" "🎸" "🎹" "🎤")
-            RANDOM_EMOJI="${VIDEO_EMOJIS[$RANDOM % ${#VIDEO_EMOJIS[@]}]}"
 
-            if [ -f "$MASTER_README" ]; then
-              # Check if video already in list
-              if grep -qF "[${VIDEO_NAME}]" "$MASTER_README"; then
-                echo "Video already in master README, skipping: ${VIDEO_NAME}"
-                return
-              fi
+            # Counter for numbering
+            NUM=0
 
-              # Get highest number
-              LAST_NUM=$(grep -oE '^[0-9]+' "$MASTER_README" | sort -n | tail -1)
-              if [ -z "$LAST_NUM" ]; then
-                NEXT_NUM=1
-              else
-                NEXT_NUM=$((LAST_NUM + 1))
-              fi
+            # Add all existing video folders
+            for folder in videos/*/; do
+              [ -d "$folder" ] || continue
+              FOLDER_NAME=$(basename "$folder")
 
-              # Append new entry
-              echo "" >> "$MASTER_README"
-              echo "${NEXT_NUM} - ${RANDOM_EMOJI} [${VIDEO_NAME}](${FOLDER_LINK})" >> "$MASTER_README"
-            else
-              # Create new master README
-              {
-                echo "# DOWNLOADED VIDEOS LIST :"
-                echo ""
-                echo "----"
-                echo ""
-                echo "1 - ${RANDOM_EMOJI} [${VIDEO_NAME}](${FOLDER_LINK})"
-              } > "$MASTER_README"
-            fi
+              # Skip if it's not a video folder (check for README.md inside)
+              [ -f "$folder/README.md" ] || continue
 
-            echo "Updated master README with: ${VIDEO_NAME}"
+              NUM=$((NUM + 1))
+              RANDOM_EMOJI="${VIDEO_EMOJIS[$RANDOM % ${#VIDEO_EMOJIS[@]}]}"
+              FOLDER_ENCODED=$(urlencode "$FOLDER_NAME")
+              FOLDER_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/tree/${BRANCH}/videos/${FOLDER_ENCODED}"
+
+              echo "${NUM} - ${RANDOM_EMOJI} [${FOLDER_NAME}](${FOLDER_LINK})" >> "$MASTER_README"
+            done
+
+            echo "Master README regenerated with $NUM videos"
           }
 
-          # Robust push with retry for concurrent workflows
+          # Push with retry - KEEPS FILES SAFE
           push_with_retry() {
-            local MAX_RETRIES=15
+            local MAX_RETRIES=20
             local RETRY=0
 
             while [ $RETRY -lt $MAX_RETRIES ]; do
@@ -577,76 +575,44 @@ jobs:
               echo ""
               echo "========== Push attempt $RETRY of $MAX_RETRIES =========="
 
-              # Fetch latest from remote
-              echo "Fetching latest changes..."
-              git fetch origin "$BRANCH" || true
+              # Always start fresh from remote to avoid conflicts
+              echo "Fetching and resetting to remote..."
+              git fetch origin "$BRANCH"
+              git reset --hard origin/"$BRANCH"
 
-              # Check if we need to rebase
-              LOCAL_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "none")
-              REMOTE_HEAD=$(git rev-parse origin/"$BRANCH" 2>/dev/null || echo "none")
+              # Copy our backup files into videos folder
+              echo "Copying backup files to videos folder..."
+              mkdir -p videos
+              cp -r "$BACKUP_DIR"/* videos/ 2>/dev/null || true
 
-              echo "Local HEAD: $LOCAL_HEAD"
-              echo "Remote HEAD: $REMOTE_HEAD"
+              # Regenerate master README with ALL videos (existing + new)
+              regenerate_master_readme
 
-              if [ "$LOCAL_HEAD" != "$REMOTE_HEAD" ] && [ "$REMOTE_HEAD" != "none" ]; then
-                echo "Branches diverged, rebasing..."
+              # Show what we're adding
+              echo "Files to be added:"
+              find videos -type f -newer /tmp/backup_dir_path.txt 2>/dev/null | head -20 || true
 
-                # Save our current changes
-                git stash push -m "temp_stash_$(date +%s)" --include-untracked || true
+              # Add all video files
+              git add -A videos/
 
-                # Get list of stashes
-                STASH_COUNT=$(git stash list | wc -l)
-                echo "Stash count: $STASH_COUNT"
-
-                # Pull latest
-                git pull --rebase origin "$BRANCH" || {
-                  echo "Rebase failed, resetting to remote..."
-                  git rebase --abort 2>/dev/null || true
-                  git reset --hard origin/"$BRANCH"
-                }
-
-                # Pop stash if we have one
-                if [ "$STASH_COUNT" -gt 0 ]; then
-                  echo "Restoring stashed changes..."
-                  git stash pop || {
-                    echo "Stash pop failed, trying to apply..."
-                    git checkout stash -- . 2>/dev/null || true
-                    git stash drop || true
-                  }
-                fi
-
-                # Re-read video info and update master README
-                if [ -f /tmp/video_info.txt ]; then
-                  while IFS='|' read -r VIDEO_NAME FOLDER_NAME || [ -n "$VIDEO_NAME" ]; do
-                    if [ -n "$VIDEO_NAME" ] && [ -n "$FOLDER_NAME" ]; then
-                      # Check if the folder exists (our files)
-                      if [ -d "videos/${FOLDER_NAME}" ]; then
-                        update_master_readme "$VIDEO_NAME" "$FOLDER_NAME"
-                      fi
-                    fi
-                  done < /tmp/video_info.txt
-                fi
-
-                # Re-add all files
-                echo "Re-adding all video files..."
-                git add -A videos/
-
-                # Check if there are changes to commit
-                if git diff --cached --quiet; then
-                  echo "No changes to commit after rebase"
-                else
-                  git commit -m "[AVASAM] YouTube download [skip ci]" || true
-                fi
+              # Check if there's anything to commit
+              if git diff --cached --quiet; then
+                echo "No new changes to commit (files might already exist)"
+                return 0
               fi
 
+              # Commit
+              echo "Committing..."
+              git commit -m "[AVASAM] YouTube download [skip ci]"
+
               # Try to push
-              echo "Attempting to push..."
+              echo "Pushing..."
               if git push origin HEAD:"$BRANCH" 2>&1; then
                 echo "Push successful!"
                 return 0
               else
-                WAIT_TIME=$((5 + RANDOM % 15))
-                echo "Push failed. Waiting ${WAIT_TIME}s before retry..."
+                WAIT_TIME=$((3 + RANDOM % 10))
+                echo "Push failed (probably another workflow pushed). Waiting ${WAIT_TIME}s..."
                 sleep $WAIT_TIME
               fi
             done
@@ -655,49 +621,7 @@ jobs:
             return 1
           }
 
-          # Read video info and update master README BEFORE first commit
-          echo ""
-          echo "===== Updating master README ====="
-          if [ -f /tmp/video_info.txt ]; then
-            cat /tmp/video_info.txt
-            while IFS='|' read -r VIDEO_NAME FOLDER_NAME || [ -n "$VIDEO_NAME" ]; do
-              if [ -n "$VIDEO_NAME" ] && [ -n "$FOLDER_NAME" ]; then
-                echo "Processing: VIDEO_NAME='${VIDEO_NAME}' FOLDER_NAME='${FOLDER_NAME}'"
-                if [ -d "videos/${FOLDER_NAME}" ]; then
-                  update_master_readme "$VIDEO_NAME" "$FOLDER_NAME"
-                else
-                  echo "WARNING: Folder videos/${FOLDER_NAME} does not exist!"
-                fi
-              fi
-            done < /tmp/video_info.txt
-          else
-            echo "WARNING: /tmp/video_info.txt not found!"
-          fi
-
-          # Add all video files
-          echo ""
-          echo "===== Adding files to git ====="
-          git add -A videos/
-
-          # Show what's staged
-          echo ""
-          echo "===== Staged files ====="
-          git diff --cached --name-only
-
-          # Check if there's anything to commit
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          # Commit
-          echo ""
-          echo "===== Committing ====="
-          git commit -m "[AVASAM] YouTube download [skip ci]"
-
-          # Push with retry
-          echo ""
-          echo "===== Pushing ====="
+          # Run the push with retry
           push_with_retry
 
           echo ""
